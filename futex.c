@@ -445,27 +445,26 @@ static struct futex_hash_bucket *hash_futex(union futex_key *key)
 	this will be revised and made more efficient later down the line as this wastes many index spaces
 	(system users are quite sparse).*/
 	//futex shared hashing condition:
-	if(key->shared.offset && (FUT_OFF_INODE | FUT_OFF_MMSHARED))
+	if(key->both.offset & (FUT_OFF_INODE | FUT_OFF_MMSHARED))
 	{
 		return &futex_queues[0];
 	}
 	//otherwise, if a futex is not shared, we hash it based on the uid of the owner
-	else
+	
+	
+	rcu_read_lock();
+	task = rcu_dereference(key->private.mm->owner);
+	if(!task)
 	{
-		rcu_read_lock();
-		task = rcu_dereference(key->private.mm->owner);
-		if(task)
-		{
-			cred = __task_cred(task);
-			uid = __kuid_val(cred->uid);
-			rcu_read_unlock();
-			index = uid + 1;
-			return &futex_queues[index];
-		}
 		rcu_read_unlock();
 		return ERR_PTR(-EINVAL);
 	}
-	return ERR_PTR(-EINVAL);
+
+	cred = __task_cred(task);
+	uid = __kuid_val(cred->uid);
+	index = (uid % (futex_hashsize - 1))+ 1;
+	rcu_read_unlock();
+	return &futex_queues[index];
 }
 static struct futex_sub_bucket *hash_sub_bucket(union futex_key *key)
 {
@@ -475,10 +474,11 @@ static struct futex_sub_bucket *hash_sub_bucket(union futex_key *key)
 	u32 hash = jhash2((u32 *)key, offsetof(typeof(*key), both.offset) / 4,
 			  key->both.offset);
 	bucket = hash_futex(key);
-	if(IS_ERR(bucket))
-	{
+	if(IS_ERR_OR_NULL(bucket))
 		return ERR_PTR(-EINVAL);
-	}
+	if(!bucket->sub_buckets)
+		return ERR_PTR(-EINVAL);
+
 	return &bucket->sub_buckets[hash % futex_sub_bucket_hashsize];
 }
 #else
