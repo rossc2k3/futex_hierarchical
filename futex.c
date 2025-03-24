@@ -6070,13 +6070,8 @@ static int __init futex_init(void)
 #if CONFIG_BASE_SMALL
 	futex_hashsize = 16;
 #else
-	/*#ifdef CONFIG_HIERARCHICAL_HASH //implement when we can suss out users
-		futex_hashsize = 256; //default init size to be adjusted when we can get the number of users
-	#else*/
 		futex_hashsize = roundup_pow_of_two(256 * num_possible_cpus());
-		futex_sub_bucket_hashsize = 32;
-	//#endif
-	
+		futex_sub_bucket_hashsize = 32;	
 #endif
 
 	futex_queues = alloc_large_system_hash("futex", sizeof(*futex_queues),
@@ -6091,8 +6086,6 @@ static int __init futex_init(void)
 	for (i = 0; i < futex_hashsize; i++) {
 
 		#ifdef CONFIG_HIERARCHICAL_HASH
-			//using const numbers for now while testing
-			//make a hash table for each sub bucket
 			futex_queues[i].sub_buckets = alloc_large_system_hash("futex_sub_bucket", sizeof(*futex_queues[i].sub_buckets),
 								futex_sub_bucket_hashsize, 0,
 								HASH_SMALL,
@@ -6115,153 +6108,6 @@ static int __init futex_init(void)
 
 	return 0;
 }
-
-/*#ifdef CONFIG_HIERARCHICAL_HASH
-
-//since we can't get the number of users at early boot stage, we need
-//to resize the hash table when we can get the number of users. start
-//off with a default size of 256, and call to resize later.
-
-static void migrate_futexes(struct futex_hash_bucket *old_queues, unsigned long old_size,
-							struct futex_hash_bucket *new_queues, unsigned long new_size)
-{
-	struct futex_q *this, *next;
-	int old_idx, new_idx;
-
-	rcu_read_lock();
-
-	for(old_idx = 0; old_idx < old_size; old_idx++)
-	{
-		struct futex_hash_bucket *old_bucket = &old_queues[old_idx];
-
-		spin_lock(&old_bucket->lock);
-		plist_for_each_entry_safe(this, next, &old_bucket->chain, list)
-		{
-			struct futex_hash_bucket *new_bucket;
-			u32 hash = (u32)(uintptr_t)hash_futex(&this->key);
-
-			new_idx = hash & (new_size - 1);
-			new_bucket = &new_queues[new_idx];
-
-			spin_lock(&new_bucket->lock);
-
-			//update counts
-			atomic_dec(&old_bucket->waiters);
-			atomic_inc(&new_bucket->waiters);
-
-			//move queue entry
-			plist_del(&this->list, &old_bucket->chain);
-			plist_add(&this->list, &new_bucket->chain);
-
-			//update lock ptr
-			this->lock_ptr = &new_bucket->lock;
-
-			spin_unlock(&new_bucket->lock);
-		}
-		spin_unlock(&old_bucket->lock);
-	}
-	rcu_read_unlock();
-}
-
-static int resize_futex_hash(unsigned long new_size)
-{
-	struct futex_hash_bucket *new_queues, *old_queues;
-	unsigned long i, old_size;
-
-	//resize to a power of 2 to give room for new users
-	if (!is_power_of_2(new_size))
-	{
-		return -EINVAL;
-	}
-
-	new_queues = alloc_large_system_hash("futex",
-								sizeof(struct futex_hash_bucket),
-								new_size, 0,
-								new_size < 256 ? HASH_SMALL : 0,
-								NULL, NULL,
-								new_size, new_size);
-
-	if (!new_queues)
-	{
-		return -ENOMEM;
-	}
-
-	//init the new queues
-	for (i = 0; i < new_size; i++)
-	{
-		atomic_set(&new_queues[i].waiters, 0);
-		plist_head_init(&new_queues[i].chain);
-		spin_lock_init(&new_queues[i].lock);
-	}
-
-	spin_lock(&futex_resize_lock);
-
-	//lock both the old and new queues
-
-	for (i = 0; i < futex_hashsize; i++)
-	{
-		spin_lock(&futex_queues[i].lock);
-	}
-	for (i = 0; i < new_size; i++)
-	{
-		spin_lock(&new_queues[i].lock);
-	}
-
-	//save the old queues before swap
-
-	old_queues = futex_queues;
-	old_size = futex_hashsize;
-
-	//swap the queues
-	migrate_futexes(old_queues, old_size, new_queues, new_size);
-
-	//swap to new table
-	rcu_assign_pointer(futex_queues, new_queues);
-	futex_queues = new_queues;
-	futex_hashsize = new_size;
-
-	//unlock the buckets
-
-	for (i = 0; i < new_size; i++)
-	{
-		spin_unlock(&new_queues[i].lock);
-	}
-	for (i = 0; i < old_size; i++)
-	{
-		spin_unlock(&old_queues[i].lock);
-	}
-
-	spin_unlock(&futex_resize_lock);
-
-	//free the old table after rcu grace period
-	synchronize_rcu();
-	kvfree(old_queues);
-
-	return 0;
-}
-
-static int __init futex_late_init(void)
-{
-	unsigned long user_count;
-	int ret;
-
-	printk(KERN_INFO "Futex late init\n");
-
-	user_count = count_system_users();
-	user_count = roundup_pow_of_two(max(user_count, 256UL));
-
-	if(user_count > futex_hashsize)
-	{
-		printk(KERN_INFO "Resizing futex hash table to %lu\n", user_count);
-		ret = resize_futex_hash(user_count);
-		if (ret)
-		{
-			pr_warn("Failed to resize futex hash table\n");
-		}
-	}
-	return 0;
-}
-#endif*/
 
 core_initcall(futex_init);
 /*#ifdef CONFIG_HIERARCHICAL_HASH
